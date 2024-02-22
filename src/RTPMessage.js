@@ -1,6 +1,7 @@
 /* eslint-disable no-mixed-operators */
 /* eslint-disable no-bitwise */
 const AbstractMessage = require('./AbstractMessage');
+const logger = require('./logger');
 
 /**
 * This represents a RTP Protocol message.
@@ -93,7 +94,13 @@ class RTPMessage extends AbstractMessage {
       buffer.writeUInt8(firstByte, 0);
       buffer.writeUInt8(secondByte, 1);
       buffer.writeUInt16BE(this.sequenceNumber, 2);
-      buffer.writeUInt32BE(this.timestamp << 0, 4);
+
+      try {
+          buffer.writeUInt32BE(this.timestamp << 0, 4);
+      } catch(err) {
+          logger.error('Error generating buffer for:',this)
+          throw err
+      }
 
       buffer.writeUInt32BE(this.ssrc, 8);
 
