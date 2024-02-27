@@ -96,7 +96,7 @@ class RTPMessage extends AbstractMessage {
       buffer.writeUInt16BE(this.sequenceNumber, 2);
 
       try {
-          buffer.writeUInt32BE(this.timestamp << 0, 4);
+          buffer.writeUInt32BE(this.timestamp, 4);
       } catch(err) {
           logger.error('Error generating buffer for:',this)
           throw err
