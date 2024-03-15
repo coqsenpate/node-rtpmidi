@@ -216,6 +216,9 @@ class Stream extends EventEmitter {
 
 	sendSynchronization(incomingSyncMessage) {
 		const now = this.session.now();
+		const nowMinusTimeDifference = Math.max(0,now-this.timeDifference) // don't allow negative value.
+		if (this.timeDifference > now)
+			logger.warn('Time difference greater than now value:',now,this)
 		const count = incomingSyncMessage ? incomingSyncMessage.count : -1;
 		const answer = new ControlMessage();
 
@@ -231,7 +234,7 @@ class Stream extends EventEmitter {
 			case -1:
 				writeUInt64BE(answer.timestamp1, now);
 				if (this.timeDifference) {
-					writeUInt64BE(answer.timestamp2, now - this.timeDifference);
+					writeUInt64BE(answer.timestamp2, nowMinusTimeDifference);
 				} else {
 					writeUInt64BE(answer.timestamp2, 0);
 				}
@@ -243,7 +246,7 @@ class Stream extends EventEmitter {
 				break;
 			case 0:
 				writeUInt64BE(answer.timestamp2, now);
-				writeUInt64BE(answer.timestamp3, now - this.timeDifference);
+				writeUInt64BE(answer.timestamp3, nowMinusTimeDifference);
 				break;
 			case 1:
 				writeUInt64BE(answer.timestamp3, now);
