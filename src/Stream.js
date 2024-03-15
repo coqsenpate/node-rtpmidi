@@ -239,7 +239,7 @@ class Stream extends EventEmitter {
 					writeUInt64BE(answer.timestamp2, 0);
 				}
 				if (this.latency) {
-					writeUInt64BE(answer.timestamp3, now + this.latency);
+					writeUInt64BE(answer.timestamp3, Math.max(0,now + this.latency));
 				} else {
 					writeUInt64BE(answer.timestamp3, 0);
 				}
