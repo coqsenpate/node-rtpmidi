@@ -8,307 +8,307 @@ const logger = require('./logger');
 const Stream = require('./Stream');
 
 class Session extends EventEmitter {
-    constructor(port, localName, bonjourName, ssrc, published, ipVersion) {
-      super()
-      // RTP related
-      this.streams = [];
-      this.localName = localName;
-      this.bonjourName = bonjourName;
-      this.port = port || 5004;
-      this.ssrc = ssrc || Math.round(Math.random() * (2 ** (8 * 4)));
-      this.readyState = 0;
-      this.published = !!published;
-      // State
-      this.bundle = true;
-      this.queue = [];
-      this.flushQueued = false;
-      this.lastFlush = 0;
-      this.lastMessageTime = 0;
-      // IPV
-      this.ipVersion = ipVersion === 6 ? 6 : 4;
-      // Streams
-      this.streamConnected = this.streamConnected.bind(this);
-      this.streamDisconnected = this.streamDisconnected.bind(this);
-      this.deliverMessage = this.deliverMessage.bind(this);
-      // Socket handling
-      this.controlChannel = dgram.createSocket({
-        type: `udp${this.ipVersion}`,
-        reuseAddr: true,
-      });
-      this.controlChannel.on('message', this.handleMessage.bind(this));
-      this.controlChannel.on('listening', this.listening.bind(this));
-      this.controlChannel.on('error', this.emit.bind(this, 'error'));
+	constructor(port, localName, bonjourName, ssrc, published, ipVersion) {
+		super()
+		// RTP related
+		this.streams = [];
+		this.localName = localName;
+		this.bonjourName = bonjourName;
+		this.port = port || 5004;
+		this.ssrc = ssrc || Math.round(Math.random() * (2 ** (8 * 4)));
+		this.readyState = 0;
+		this.published = !!published;
+		// State
+		this.bundle = true;
+		this.queue = [];
+		this.flushQueued = false;
+		this.lastFlush = 0;
+		this.lastMessageTime = 0;
+		// IPV
+		this.ipVersion = ipVersion === 6 ? 6 : 4;
+		// Streams
+		this.streamConnected = this.streamConnected.bind(this);
+		this.streamDisconnected = this.streamDisconnected.bind(this);
+		this.deliverMessage = this.deliverMessage.bind(this);
+		// Socket handling
+		this.controlChannel = dgram.createSocket({
+			type: `udp${this.ipVersion}`,
+			reuseAddr: true,
+		});
+		this.controlChannel.on('message', this.handleMessage.bind(this));
+		this.controlChannel.on('listening', this.listening.bind(this));
+		this.controlChannel.on('error', this.emit.bind(this, 'error'));
 
-      this.messageChannel = dgram.createSocket({
-        type: `udp${this.ipVersion}`,
-        reuseAddr: true,
-      });
-      this.messageChannel.on('message', this.handleMessage.bind(this));
-      this.messageChannel.on('listening', this.listening.bind(this));
-      this.messageChannel.on('error', this.emit.bind(this, 'error'));
-      // Message delivery Rate
-      this.rate = 10000;
-      // Start timing
-      this.startTime = Date.now() / 1000 * this.rate;
-      this.startTimeHr = process.hrtime();
-    }
+		this.messageChannel = dgram.createSocket({
+			type: `udp${this.ipVersion}`,
+			reuseAddr: true,
+		});
+		this.messageChannel.on('message', this.handleMessage.bind(this));
+		this.messageChannel.on('listening', this.listening.bind(this));
+		this.messageChannel.on('error', this.emit.bind(this, 'error'));
+		// Message delivery Rate
+		this.rate = 10000;
+		// Start timing
+		this.startTime = Date.now() / 1000 * this.rate;
+		this.startTimeHr = process.hrtime();
+	}
 
-    start() {
-      if (this.published) {
-        this.on('ready', () => this.publish());
-      }
-      // Bind channels to session port
-      if(!this.controlChannel._bindState){
-        this.controlChannel.bind(this.port, this.ipVersion == 4 ? '0.0.0.0' : '::');
-        this.messageChannel.bind(this.port + 1, this.ipVersion == 4 ? '0.0.0.0' : '::');
-      }
-
-
-    }
-
-    end(callback) {
-      let i = -1;
-      const onClose = () => {
-        this.readyState -= 1;
-        if (this.readyState <= 0) {
-          callback && callback();
-        }
-      };
-      const next = () => {
-        i += 1;
-        const stream = this.streams[i];
-        if (stream) {
-          stream.end(next);
-        } else {
-          this.unpublish();
-
-          this.controlChannel.on('close', onClose);
-          this.messageChannel.on('close', onClose);
-
-          this.controlChannel.close();
-          this.messageChannel.close();
-          this.published = false;
-        }
-      };
-
-      if (this.readyState === 2) {
-        next();
-      } else {
-        callback && callback();
-      }
-    }
-
-    now() {
-      const hrtime = process.hrtime(this.startTimeHr);
-      return Math.round(
-        ((hrtime[0] + hrtime[1] / 1000 / 1000 / 1000)) * this.rate,
-      ) % 0xffffffff;
-    }
-
-    listening() {
-      this.readyState += 1;
-      if (this.readyState === 2) {
-        this.emit('ready');
-      }
-    }
-
-    handleMessage(message, rinfo) {
-      logger.debug('Incoming Message = ', message);
-      const appleMidiMessage = new ControlMessage().parseBuffer(message);
-      let stream;
-      if (appleMidiMessage.isValid) {
-        stream = this.streams.filter(
-          streamItem => (streamItem.ssrc === appleMidiMessage.ssrc)
-            || (streamItem.token === appleMidiMessage.token),
-        ).pop();
-        this.emit('controlMessage', appleMidiMessage);
+	start() {
+		if (this.published) {
+			this.on('ready', () => this.publish());
+		}
+		// Bind channels to session port
+		if(!this.controlChannel._bindState){
+			this.controlChannel.bind(this.port, this.ipVersion == 4 ? '0.0.0.0' : '::');
+			this.messageChannel.bind(this.port + 1, this.ipVersion == 4 ? '0.0.0.0' : '::');
+		}
 
 
-        if (!stream && appleMidiMessage.command === 'invitation') {
-          stream = new Stream(this);
-          stream.handleControlMessage(appleMidiMessage, rinfo);
-          this.addStream(stream);
-        } else if (stream) {
-          stream.handleControlMessage(appleMidiMessage, rinfo);
-        }
-      } else {
-        const rtpMidiMessage = new MidiMessage().parseBuffer(message);
-        if(!rtpMidiMessage){
-          return;
-        }
-        stream = this.streams.filter(
-          streamItem => streamItem.ssrc === rtpMidiMessage.ssrc,
-        ).pop();
-        if (stream) {
-          stream.handleMidiMessage(rtpMidiMessage);
-        }
-        this.emit('midi', rtpMidiMessage);
-      }
-    }
+	}
 
-    sendUdpMessage(rinfo, message, callback) {
-      message.generateBuffer();
+	end(callback) {
+		let i = -1;
+		const onClose = () => {
+			this.readyState -= 1;
+			if (this.readyState <= 0) {
+				callback && callback();
+			}
+		};
+		const next = () => {
+			i += 1;
+			const stream = this.streams[i];
+			if (stream) {
+				stream.end(next);
+			} else {
+				this.unpublish();
 
-      if (message.isValid) {
-        try {
-          (
-            rinfo.port % 2 === 0 ? this.controlChannel : this.messageChannel
-          ).send(
-            message.buffer,
-            0,
-            message.buffer.length,
-            rinfo.port, rinfo.address,
-            () => {
-              logger.debug('Outgoing Message = ', message.buffer, rinfo.port, rinfo.address);
-              callback && callback();
-            },
-          );
-        } catch (error) {
-          logger.error(error);
-        }
-      } else {
-        logger.warn('Ignoring invalid message', message);
-      }
-    }
+				this.controlChannel.on('close', onClose);
+				this.messageChannel.on('close', onClose);
 
-    queueFlush() {
-      if (this.bundle) {
-        if (!this.flushQueued) {
-          this.flushQueued = true;
-          setImmediate(this.flushQueue.bind(this));
-        }
-      } else {
-        this.flushQueue();
-      }
-    }
+				this.controlChannel.close();
+				this.messageChannel.close();
+				this.published = false;
+			}
+		};
 
-    flushQueue() {
-      const streams = this.getStreams();
-      const queue = this.queue.slice(0);
-      const now = this.now();
+		if (this.readyState === 2) {
+			next();
+		} else {
+			callback && callback();
+		}
+	}
 
-      this.queue.length = 0;
-      this.flushQueued = false;
+	now() {
+		const hrtime = process.hrtime(this.startTimeHr);
+		return Math.round(
+			((hrtime[0] + hrtime[1] / 1000 / 1000 / 1000)) * this.rate,
+		) % 0xffffffff;
+	}
 
-      queue.sort((a, b) => (a.comexTime - b.comexTime));
+	listening() {
+		this.readyState += 1;
+		if (this.readyState === 2) {
+			this.emit('ready');
+		}
+	}
 
-      let messageTime = queue[0].comexTime;
+	handleMessage(message, rinfo) {
+		logger.debug('Incoming Message = ', message);
+		const appleMidiMessage = new ControlMessage().parseBuffer(message);
+		let stream;
+		if (appleMidiMessage.isValid) {
+			stream = this.streams.filter(
+				streamItem => (streamItem.ssrc === appleMidiMessage.ssrc)
+					|| (streamItem.token === appleMidiMessage.token),
+			).pop();
+			this.emit('controlMessage', appleMidiMessage);
 
-      if (messageTime > now) {
-        messageTime = now;
-      }
 
-      queue.forEach((message) => {
-        // eslint-disable-next-line no-param-reassign
-        message.deltaTime = message.comexTime - messageTime;
-      });
+			if (!stream && appleMidiMessage.command === 'invitation') {
+				stream = new Stream(this);
+				stream.handleControlMessage(appleMidiMessage, rinfo);
+				this.addStream(stream);
+			} else if (stream) {
+				stream.handleControlMessage(appleMidiMessage, rinfo);
+			}
+		} else {
+			const rtpMidiMessage = new MidiMessage().parseBuffer(message);
+			if(!rtpMidiMessage){
+				return;
+			}
+			stream = this.streams.filter(
+				streamItem => streamItem.ssrc === rtpMidiMessage.ssrc,
+			).pop();
+			if (stream) {
+				stream.handleMidiMessage(rtpMidiMessage);
+			}
+			this.emit('midi', rtpMidiMessage);
+		}
+	}
 
-      const message = {
-        timestamp: now,
-        commands: queue,
-      };
+	sendUdpMessage(rinfo, message, callback) {
+		message.generateBuffer();
 
-      for (let i = 0; i < streams.length; i += 1) {
-        streams[i].sendMessage(message);
-      }
-    }
+		if (message.isValid) {
+			try {
+				(
+					rinfo.port % 2 === 0 ? this.controlChannel : this.messageChannel
+				).send(
+					message.buffer,
+					0,
+					message.buffer.length,
+					rinfo.port, rinfo.address,
+					() => {
+						logger.debug('Outgoing Message = ', message.buffer, rinfo.port, rinfo.address);
+						callback && callback();
+					},
+				);
+			} catch (error) {
+				logger.error(error);
+			}
+		} else {
+			logger.warn('Ignoring invalid message', message);
+		}
+	}
 
-    sendMessage(comexTime, command, ...args) {
-      let cTime = comexTime;
-      let cmd;
+	queueFlush() {
+		if (this.bundle) {
+			if (!this.flushQueued) {
+				this.flushQueued = true;
+				setImmediate(this.flushQueue.bind(this));
+			}
+		} else {
+			this.flushQueue();
+		}
+	}
 
-      if (arguments.length === 1) {
-        cTime = this.now();
-        command = comexTime; // Picks first arg using array destructing
-      } else {
-        cTime = comexTime - this.startTime;
-      }
+	flushQueue() {
+		const streams = this.getStreams();
+		const queue = this.queue.slice(0);
+		const now = this.now();
 
-      if (!Buffer.isBuffer(command)) {
-        cmd = Buffer.from(command);
-      }
+		this.queue.length = 0;
+		this.flushQueued = false;
 
-      this.queue.push({ comexTime: cTime, data: cmd });
-      this.queueFlush();
-    }
+		queue.sort((a, b) => (a.comexTime - b.comexTime));
 
-    connect(rinfo) {
-      const stream = new Stream(this);
-      const info = {
-        address: (this.ipVersion === 6 && rinfo.addressV6) ? rinfo.addressV6 : rinfo.address,
-        port: rinfo.port,
-      };
+		let messageTime = queue[0].comexTime;
 
-      this.addStream(stream);
-      stream.connect(info);
-    }
+		if (messageTime > now) {
+			messageTime = now;
+		}
 
-    streamConnected(event) {
-      this.emit('streamAdded', {
-        stream: event.stream,
-      });
-    }
+		queue.forEach((message) => {
+			// eslint-disable-next-line no-param-reassign
+			message.deltaTime = message.comexTime - messageTime;
+		});
 
-    streamDisconnected(event) {
-      this.removeStream(event.stream);
-      this.emit('streamRemoved', {
-        stream: event.stream,
-      });
-    }
+		const message = {
+			timestamp: now,
+			commands: queue,
+		};
 
-    addStream(stream) {
-      stream.on('connected', this.streamConnected);
-      stream.on('disconnected', this.streamDisconnected);
-      stream.on('message', this.deliverMessage);
-      this.streams.push(stream);
-    }
+		for (let i = 0; i < streams.length; i += 1) {
+			streams[i].sendMessage(message);
+		}
+	}
 
-    removeStream(stream) {
-      stream.removeListener('connected', this.streamConnected);
-      stream.removeListener('disconnected', this.streamDisconnected);
-      stream.removeListener('message', this.deliverMessage);
-      this.streams.splice(this.streams.indexOf(stream));
-    }
+	sendMessage(comexTime, command, ...args) {
+		let cTime = comexTime;
+		let cmd;
 
-    deliverMessage(comexTime, message) {
-      this.lastMessageTime = this.lastMessageTime || comexTime;
-      const deltaTime = comexTime - this.lastMessageTime;
-      this.lastMessageTime = comexTime;
-      this.emit('message', deltaTime / this.rate, message, comexTime + this.startTime);
-    }
+		if (arguments.length === 1) {
+			cTime = this.now();
+			command = comexTime; // Picks first arg using array destructing
+		} else {
+			cTime = comexTime - this.startTime;
+		}
 
-    getStreams() {
-      return this.streams.filter(item => item.isConnected);
-    }
+		if (!Buffer.isBuffer(command)) {
+			cmd = Buffer.from(command);
+		}
 
-    getStream(ssrc) {
-      for (let i = 0; i < this.streams.length; i += 1) {
-        if (this.streams[i].ssrc === ssrc) {
-          return this.streams[i];
-        }
-      }
-      return null;
-    }
+		this.queue.push({ comexTime: cTime, data: cmd });
+		this.queueFlush();
+	}
 
-    publish() {
-      MdnsService.publish(this);
-    }
+	connect(rinfo) {
+		const stream = new Stream(this);
+		const info = {
+			address: (this.ipVersion === 6 && rinfo.addressV6) ? rinfo.addressV6 : rinfo.address,
+			port: rinfo.port,
+		};
 
-    unpublish() {
-      MdnsService.unpublish(this);
-    }
+		this.addStream(stream);
+		stream.connect(info);
+	}
 
-    toJSON(includeStreams) {
-      return {
-        bonjourName: this.bonjourName,
-        localName: this.localName,
-        ssrc: this.ssrc,
-        port: this.port,
-        published: this.published,
-        activated: this.readyState >= 2,
-        streams: includeStreams ? this.getStreams().map(stream => stream.toJSON()) : undefined,
-      };
-    }
+	streamConnected(event) {
+		this.emit('streamAdded', {
+			stream: event.stream,
+		});
+	}
+
+	streamDisconnected(event) {
+		this.removeStream(event.stream);
+		this.emit('streamRemoved', {
+			stream: event.stream,
+		});
+	}
+
+	addStream(stream) {
+		stream.on('connected', this.streamConnected);
+		stream.on('disconnected', this.streamDisconnected);
+		stream.on('message', this.deliverMessage);
+		this.streams.push(stream);
+	}
+
+	removeStream(stream) {
+		stream.removeListener('connected', this.streamConnected);
+		stream.removeListener('disconnected', this.streamDisconnected);
+		stream.removeListener('message', this.deliverMessage);
+		this.streams.splice(this.streams.indexOf(stream));
+	}
+
+	deliverMessage(comexTime, message) {
+		this.lastMessageTime = this.lastMessageTime || comexTime;
+		const deltaTime = comexTime - this.lastMessageTime;
+		this.lastMessageTime = comexTime;
+		this.emit('message', deltaTime / this.rate, message, comexTime + this.startTime);
+	}
+
+	getStreams() {
+		return this.streams.filter(item => item.isConnected);
+	}
+
+	getStream(ssrc) {
+		for (let i = 0; i < this.streams.length; i += 1) {
+			if (this.streams[i].ssrc === ssrc) {
+				return this.streams[i];
+			}
+		}
+		return null;
+	}
+
+	publish() {
+		MdnsService.publish(this);
+	}
+
+	unpublish() {
+		MdnsService.unpublish(this);
+	}
+
+	toJSON(includeStreams) {
+		return {
+			bonjourName: this.bonjourName,
+			localName: this.localName,
+			ssrc: this.ssrc,
+			port: this.port,
+			published: this.published,
+			activated: this.readyState >= 2,
+			streams: includeStreams ? this.getStreams().map(stream => stream.toJSON()) : undefined,
+		};
+	}
 }
 
 module.exports = Session;
