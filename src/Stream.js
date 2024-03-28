@@ -217,8 +217,6 @@ class Stream extends EventEmitter {
 	sendSynchronization(incomingSyncMessage) {
 		const now = this.session.now();
 		const nowMinusTimeDifference = Math.max(0,now-this.timeDifference) // don't allow negative value.
-		if (this.timeDifference > now)
-			logger.warn('Time difference greater than now value:',now,this)
 		const count = incomingSyncMessage ? incomingSyncMessage.count : -1;
 		const answer = new ControlMessage();
 
